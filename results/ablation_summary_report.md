@@ -1,19 +1,19 @@
-# MALIBO Upgrade Ablation Study — Complete Statistical Report
+# MALIBO 升级消融实验完整统计报告
 
-## 1. Experimental Matrix (2×2 Factorial Ablation + TuRBO Baselines)
+## 1. 2×2 消融实验矩阵（含原版 TuRBO / LLM-Meta-TuRBO 参照基线）
 
-| Method | Surrogate | Trust Region | LLM Offset Injection | Source |
+| 方法 | 代理模型 | 自适应信任域（TR） | LLM 偏移量注入 | 数据来源 |
 | :--- | :--- | :---: | :---: | :--- |
-| **Vanilla-TuRBO / TuRBO-1** | GP (Matérn-5/2) | Yes | No | Frozen baseline |
-| **MALIBO (Paper-Exact)** | Meta-ResFFN + Laplace TS + GBDT | No (Global) | No | Frozen baseline |
-| **TR-MALIBO** | Meta-ResFFN + Laplace TS + GBDT | **Yes** | No | **New (Upgrade 1)** |
-| **LLM-MALIBO** | Meta-ResFFN + Laplace TS + GBDT | No (Global) | **Yes** | **New (Upgrade 2)** |
-| **LLM-TR-MALIBO** | Meta-ResFFN + Laplace TS + GBDT | **Yes** | **Yes** | **New (Upgrade 3)** |
-| **LLM-Meta-TuRBO** | GP (Matérn-5/2) | Yes | Yes | Frozen baseline |
+| **Vanilla-TuRBO / TuRBO-1** | 高斯过程 GP（Matérn-5/2） | 是 | 否 | 冻结基线数据 |
+| **MALIBO（原版）** | Meta-ResFFN + Laplace TS + 残差 GBDT | 否（全局搜索） | 否 | 冻结基线数据 |
+| **TR-MALIBO** | Meta-ResFFN + Laplace TS + 残差 GBDT | **是** | 否 | **新增（仅加信任域）** |
+| **LLM-MALIBO** | Meta-ResFFN + Laplace TS + 残差 GBDT | 否（全局搜索） | **是** | **新增（仅加 LLM）** |
+| **LLM-TR-MALIBO** | Meta-ResFFN + Laplace TS + 残差 GBDT | **是** | **是** | **新增（信任域 + LLM）** |
+| **LLM-Meta-TuRBO** | 高斯过程 GP（Matérn-5/2） | 是 | 是 | 冻结基线数据 |
 
-## 2. 2D Constrained Airfoil Benchmark (NACA 0012, Re=3.5×10⁶, α=3.5°, D=18, NFE=300, 10 Seeds)
+## 2. 2D 强约束翼型基准（NACA 0012，Re=3.5×10⁶，α=3.5°，D=18，NFE=300，10 种子）
 
-| Method | Step-15 | Final Mean ± SD (L/D) | Median [Min, Max] | NFE≥120 | NFE≥160 | NFE≥200 | Feasible | Avg Calls | Time/Seed |
+| 方法 | Step-15 | 最终均值 ± 标准差 (L/D) | 中位数 [最小, 最大] | 达 120 步数 | 达 160 步数 | 达 200 步数 | 可行率 | 平均 LLM 调用 | 单种子耗时 |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Vanilla-TuRBO** | 72.47±2.24 | **195.73 ± 12.32** | 198.97 [164.2, 207.6] | 69 | 140 | -- | 10/10 | -- | -- |
 | **MALIBO** | 72.47±2.24 | **179.81 ± 9.29** | 180.00 [166.7, 192.9] | 31 | 114 | -- | 10/10 | -- | 66.6s |
@@ -22,9 +22,9 @@
 | **LLM-TR-MALIBO** | 72.47±2.24 | **235.94 ± 10.95** | 237.58 [206.5, 248.2] | 33 | 55 | 99 | 10/10 | 2.9 | 101.3s |
 | **LLM-Meta-TuRBO** | 72.47±2.24 | **227.40 ± 13.41** | 225.10 [200.8, 247.1] | 18 | 40 | 120 | 10/10 | 5.1 | 39.4s |
 
-### 2D Paired Statistical Tests (10 Paired Seeds)
+### 2D 配对显著性统计检验（10 组配对随机种子）
 
-| Comparison | Δ Mean (L/D) | Rel. % | Win Rate | Paired t | p (t-test) | p (Wilcoxon) | Cohen's d |
+| 对比组 | 均值差 Δ (L/D) | 相对提升 | 胜率 | 配对 t 值 | p (t 检验) | p (Wilcoxon) | 效应量 Cohen's d |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | TR-MALIBO vs. MALIBO | +49.81 | +27.70% | 10/10 | +9.295 | 0.00001 | 0.00195 | +2.94 |
 | LLM-MALIBO vs. MALIBO | +7.56 | +4.20% | 7/10 | +1.736 | 0.11661 | 0.13086 | +0.55 |
@@ -35,9 +35,9 @@
 | LLM-TR-MALIBO vs. Vanilla-TuRBO | +40.21 | +20.54% | 10/10 | +7.947 | 0.00002 | 0.00195 | +2.51 |
 | LLM-TR-MALIBO vs. LLM-Meta-TuRBO | +8.53 | +3.75% | 7/10 | +1.620 | 0.13966 | 0.23242 | +0.51 |
 
-## 3. 3D NREL Phase VI Wind Turbine Blade Benchmark (V=7.0 m/s, 72 rpm, D=63, NFE=300, Baseline=6.0884 kW, 10 Seeds)
+## 3. 3D NREL Phase VI 风机叶片基准（V=7.0 m/s，72 rpm，D=63，NFE=300，基准功率=6.0884 kW，10 种子）
 
-| Method | Step-15 (kW) | Power Mean ± SD (kW) | Median [Min, Max] | Gain vs. Base | NFE≥6.50 | NFE≥6.60 | Thrust (kN) | Feasible | Avg Calls | Time/Seed |
+| 方法 | Step-15 (kW) | 最终功率均值 ± 标准差 (kW) | 中位数 [最小, 最大] | 较基准提升 | 达 6.50 步数 | 达 6.60 步数 | 平均推力 (kN) | 可行率 | 平均 LLM 调用 | 单种子耗时 |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **TuRBO** | 6.1773±0.0280 | **6.5920 ± 0.0463** | 6.5717 [6.507, 6.653] | +8.27% | 68 | -- | 1.3938 | 10/10 | -- | 70.9s |
 | **MALIBO** | 6.1773±0.0280 | **6.1773 ± 0.0280** | 6.1812 [6.125, 6.228] | +1.46% | -- | -- | 1.2417 | 10/10 | -- | 111.0s |
@@ -46,9 +46,9 @@
 | **LLM-TR-MALIBO** | 6.1773±0.0280 | **6.6689 ± 0.0199** | 6.6665 [6.642, 6.706] | +9.53% | 39 | 88 | 1.3940 | 10/10 | 7.3 | 243.6s |
 | **LLM-Meta-TuRBO** | 6.1773±0.0280 | **6.6664 ± 0.0196** | 6.6573 [6.646, 6.696] | +9.49% | 36 | 60 | 1.3948 | 10/10 | 7.2 | 157.9s |
 
-### 3D Paired Statistical Tests (10 Paired Seeds)
+### 3D 配对显著性统计检验（10 组配对随机种子）
 
-| Comparison | Δ Power (kW) | Rel. % | Win Rate | Paired t | p (t-test) | p (Wilcoxon) | Cohen's d |
+| 对比组 | 功率均值差 Δ (kW) | 相对提升 | 胜率 | 配对 t 值 | p (t 检验) | p (Wilcoxon) | 效应量 Cohen's d |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | TR-MALIBO vs. MALIBO | +0.4802 | +7.77% | 10/10 | +47.646 | 0.00000 | 0.00195 | +15.07 |
 | LLM-MALIBO vs. MALIBO | +0.4691 | +7.59% | 10/10 | +25.064 | 0.00000 | 0.00195 | +7.93 |

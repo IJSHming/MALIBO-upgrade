@@ -45,21 +45,21 @@ plt.rcParams.update({
 })
 
 STYLE_2D = {
-    "Vanilla-TuRBO":  {"label": "TuRBO-1",          "color": "#4C72B0", "ls": "--", "lw": 1.8, "zorder": 3},
-    "MALIBO":         {"label": "MALIBO (Orig.)",   "color": "#C44E52", "ls": ":",  "lw": 2.0, "zorder": 3},
-    "TR-MALIBO":      {"label": "TR-MALIBO (+TR)",  "color": "#DD8452", "ls": "-",  "lw": 2.2, "zorder": 4},
-    "LLM-MALIBO":     {"label": "LLM-MALIBO (+LLM)","color": "#8172B3", "ls": "-.", "lw": 2.1, "zorder": 4},
-    "LLM-TR-MALIBO":  {"label": "LLM-TR-MALIBO",    "color": "#1B9E77", "ls": "-",  "lw": 2.6, "zorder": 6},
-    "LLM-Meta-TuRBO": {"label": "LLM-Meta-TuRBO",   "color": "#2E6F40", "ls": "--", "lw": 2.1, "zorder": 5},
+    "Vanilla-TuRBO":  {"label": "TuRBO-1",           "color": "#1D4ED8", "ls": "-", "lw": 2.0, "zorder": 3},
+    "MALIBO":         {"label": "MALIBO (Orig.)",    "color": "#DC2626", "ls": "-", "lw": 2.0, "zorder": 3},
+    "TR-MALIBO":      {"label": "TR-MALIBO (+TR)",   "color": "#FF8F00", "ls": "-", "lw": 2.2, "zorder": 4},
+    "LLM-MALIBO":     {"label": "LLM-MALIBO (+LLM)", "color": "#8E24AA", "ls": "-", "lw": 2.1, "zorder": 4},
+    "LLM-TR-MALIBO":  {"label": "LLM-TR-MALIBO",     "color": "#00A651", "ls": "-", "lw": 2.6, "zorder": 6},
+    "LLM-Meta-TuRBO": {"label": "LLM-Meta-TuRBO",    "color": "#EC4899", "ls": "-", "lw": 2.2, "zorder": 5},
 }
 
 STYLE_3D = {
-    "TuRBO":          {"label": "TuRBO-1",          "color": "#4C72B0", "ls": "--", "lw": 1.8, "zorder": 3},
-    "MALIBO":         {"label": "MALIBO (Orig.)",   "color": "#C44E52", "ls": ":",  "lw": 2.0, "zorder": 3},
-    "TR-MALIBO":      {"label": "TR-MALIBO (+TR)",  "color": "#DD8452", "ls": "-",  "lw": 2.2, "zorder": 4},
-    "LLM-MALIBO":     {"label": "LLM-MALIBO (+LLM)","color": "#8172B3", "ls": "-.", "lw": 2.1, "zorder": 4},
-    "LLM-TR-MALIBO":  {"label": "LLM-TR-MALIBO",    "color": "#1B9E77", "ls": "-",  "lw": 2.6, "zorder": 6},
-    "LLM-Meta-TuRBO": {"label": "LLM-Meta-TuRBO",   "color": "#2E6F40", "ls": "--", "lw": 2.1, "zorder": 5},
+    "TuRBO":          {"label": "TuRBO-1",           "color": "#1D4ED8", "ls": "-", "lw": 2.0, "zorder": 3},
+    "MALIBO":         {"label": "MALIBO (Orig.)",    "color": "#DC2626", "ls": "-", "lw": 2.0, "zorder": 3},
+    "TR-MALIBO":      {"label": "TR-MALIBO (+TR)",   "color": "#FF8F00", "ls": "-", "lw": 2.2, "zorder": 4},
+    "LLM-MALIBO":     {"label": "LLM-MALIBO (+LLM)", "color": "#8E24AA", "ls": "-", "lw": 2.1, "zorder": 4},
+    "LLM-TR-MALIBO":  {"label": "LLM-TR-MALIBO",     "color": "#00A651", "ls": "-", "lw": 2.6, "zorder": 6},
+    "LLM-Meta-TuRBO": {"label": "LLM-Meta-TuRBO",    "color": "#EC4899", "ls": "-", "lw": 2.2, "zorder": 5},
 }
 
 SHORT_TICK = {
@@ -125,7 +125,7 @@ def plot_case_perf(
 
     x = np.arange(1, 301)
     if baseline_val is not None:
-        ax1.axhline(baseline_val, color="#555555", ls=":", lw=1.2, alpha=0.8, label=f"Baseline ({baseline_val:.3f})")
+        ax1.axhline(baseline_val, color="#9CA3AF", ls="-", lw=1.3, alpha=0.85, label=f"Baseline ({baseline_val:.3f})")
 
     ax1.axvline(15, color="#888888", ls=":", lw=1.0, alpha=0.7)
     ax1.text(17, 0.04, r"$n_{\mathrm{init}}=15$", transform=ax1.get_xaxis_transform(), fontsize=8, color="#666666")
@@ -269,7 +269,7 @@ def plot_2d_airfoil_profiles(d2: Dict[str, Any], out_prefix: str):
 
     fig, ax = plt.subplots(figsize=(7.6, 3.0))
     base_coords = theta_to_coordinates(get_naca0012_theta())
-    ax.plot(base_coords["x_closed"], base_coords["y_closed"], color="#444444", ls=":", lw=1.4, label="NACA 0012 (65.8)")
+    ax.plot(base_coords["x_closed"], base_coords["y_closed"], color="#9CA3AF", ls="-", lw=1.5, label="NACA 0012 (65.8)")
 
     for m in ORDER_2D:
         rows = d2["results"].get(m, [])
@@ -311,9 +311,9 @@ def plot_3d_blade_spanwise(d3: Dict[str, Any], out_prefix: str):
     base_det = d3["metadata"].get("baseline_detailed", {})
     r_base = np.array(base_det.get("span_radii", [])) / 5.029
     if len(r_base) > 0:
-        axes[0].plot(r_base, base_det["span_chord"], color="#444444", ls="--", lw=1.4, label="Baseline")
-        axes[1].plot(r_base, base_det["span_twist_deg"], color="#444444", ls="--", lw=1.4, label="Baseline")
-        axes[2].plot(r_base, base_det["span_alpha_deg"], color="#444444", ls="--", lw=1.4, label="Baseline")
+        axes[0].plot(r_base, base_det["span_chord"], color="#9CA3AF", ls="-", lw=1.5, label="Baseline")
+        axes[1].plot(r_base, base_det["span_twist_deg"], color="#9CA3AF", ls="-", lw=1.5, label="Baseline")
+        axes[2].plot(r_base, base_det["span_alpha_deg"], color="#9CA3AF", ls="-", lw=1.5, label="Baseline")
 
     for m in ORDER_3D:
         rows = d3["results"].get(m, [])
@@ -348,20 +348,20 @@ def plot_3d_blade_spanwise(d3: Dict[str, Any], out_prefix: str):
 
 def build_report(d2: Dict[str, Any], d3: Dict[str, Any], out_path: str):
     lines: List[str] = []
-    lines.append("# MALIBO Upgrade Ablation Study — Complete Statistical Report\n")
-    lines.append("## 1. Experimental Matrix (2×2 Factorial Ablation + TuRBO Baselines)\n")
-    lines.append("| Method | Surrogate | Trust Region | LLM Offset Injection | Source |")
+    lines.append("# MALIBO 升级消融实验完整统计报告\n")
+    lines.append("## 1. 2×2 消融实验矩阵（含原版 TuRBO / LLM-Meta-TuRBO 参照基线）\n")
+    lines.append("| 方法 | 代理模型 | 自适应信任域（TR） | LLM 偏移量注入 | 数据来源 |")
     lines.append("| :--- | :--- | :---: | :---: | :--- |")
-    lines.append("| **Vanilla-TuRBO / TuRBO-1** | GP (Matérn-5/2) | Yes | No | Frozen baseline |")
-    lines.append("| **MALIBO (Paper-Exact)** | Meta-ResFFN + Laplace TS + GBDT | No (Global) | No | Frozen baseline |")
-    lines.append("| **TR-MALIBO** | Meta-ResFFN + Laplace TS + GBDT | **Yes** | No | **New (Upgrade 1)** |")
-    lines.append("| **LLM-MALIBO** | Meta-ResFFN + Laplace TS + GBDT | No (Global) | **Yes** | **New (Upgrade 2)** |")
-    lines.append("| **LLM-TR-MALIBO** | Meta-ResFFN + Laplace TS + GBDT | **Yes** | **Yes** | **New (Upgrade 3)** |")
-    lines.append("| **LLM-Meta-TuRBO** | GP (Matérn-5/2) | Yes | Yes | Frozen baseline |\n")
+    lines.append("| **Vanilla-TuRBO / TuRBO-1** | 高斯过程 GP（Matérn-5/2） | 是 | 否 | 冻结基线数据 |")
+    lines.append("| **MALIBO（原版）** | Meta-ResFFN + Laplace TS + 残差 GBDT | 否（全局搜索） | 否 | 冻结基线数据 |")
+    lines.append("| **TR-MALIBO** | Meta-ResFFN + Laplace TS + 残差 GBDT | **是** | 否 | **新增（仅加信任域）** |")
+    lines.append("| **LLM-MALIBO** | Meta-ResFFN + Laplace TS + 残差 GBDT | 否（全局搜索） | **是** | **新增（仅加 LLM）** |")
+    lines.append("| **LLM-TR-MALIBO** | Meta-ResFFN + Laplace TS + 残差 GBDT | **是** | **是** | **新增（信任域 + LLM）** |")
+    lines.append("| **LLM-Meta-TuRBO** | 高斯过程 GP（Matérn-5/2） | 是 | 是 | 冻结基线数据 |\n")
 
-    # 2D Section
-    lines.append("## 2. 2D Constrained Airfoil Benchmark (NACA 0012, Re=3.5×10⁶, α=3.5°, D=18, NFE=300, 10 Seeds)\n")
-    lines.append("| Method | Step-15 | Final Mean ± SD (L/D) | Median [Min, Max] | NFE≥120 | NFE≥160 | NFE≥200 | Feasible | Avg Calls | Time/Seed |")
+    # 2D 算例
+    lines.append("## 2. 2D 强约束翼型基准（NACA 0012，Re=3.5×10⁶，α=3.5°，D=18，NFE=300，10 种子）\n")
+    lines.append("| 方法 | Step-15 | 最终均值 ± 标准差 (L/D) | 中位数 [最小, 最大] | 达 120 步数 | 达 160 步数 | 达 200 步数 | 可行率 | 平均 LLM 调用 | 单种子耗时 |")
     lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
     for m in ORDER_2D:
         rows = d2["results"][m]
@@ -381,8 +381,8 @@ def build_report(d2: Dict[str, Any], d3: Dict[str, Any], out_path: str):
             f"{feas}/{len(rows)} | {c_str} | {t_str} |"
         )
 
-    lines.append("\n### 2D Paired Statistical Tests (10 Paired Seeds)\n")
-    lines.append("| Comparison | Δ Mean (L/D) | Rel. % | Win Rate | Paired t | p (t-test) | p (Wilcoxon) | Cohen's d |")
+    lines.append("\n### 2D 配对显著性统计检验（10 组配对随机种子）\n")
+    lines.append("| 对比组 | 均值差 Δ (L/D) | 相对提升 | 胜率 | 配对 t 值 | p (t 检验) | p (Wilcoxon) | 效应量 Cohen's d |")
     lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
     pairs_2d = [
         ("TR-MALIBO", "MALIBO"),
@@ -404,10 +404,10 @@ def build_report(d2: Dict[str, Any], d3: Dict[str, Any], out_path: str):
             f"{st['t']:+.3f} | {st['p_t']:.5f} | {st['p_w']:.5f} | {st['cohen_d']:+.2f} |"
         )
 
-    # 3D Section
+    # 3D 算例
     base_p = float(d3["metadata"]["baseline_power_kW"])
-    lines.append(f"\n## 3. 3D NREL Phase VI Wind Turbine Blade Benchmark (V=7.0 m/s, 72 rpm, D=63, NFE=300, Baseline={base_p:.4f} kW, 10 Seeds)\n")
-    lines.append("| Method | Step-15 (kW) | Power Mean ± SD (kW) | Median [Min, Max] | Gain vs. Base | NFE≥6.50 | NFE≥6.60 | Thrust (kN) | Feasible | Avg Calls | Time/Seed |")
+    lines.append(f"\n## 3. 3D NREL Phase VI 风机叶片基准（V=7.0 m/s，72 rpm，D=63，NFE=300，基准功率={base_p:.4f} kW，10 种子）\n")
+    lines.append("| 方法 | Step-15 (kW) | 最终功率均值 ± 标准差 (kW) | 中位数 [最小, 最大] | 较基准提升 | 达 6.50 步数 | 达 6.60 步数 | 平均推力 (kN) | 可行率 | 平均 LLM 调用 | 单种子耗时 |")
     lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
     for m in ORDER_3D:
         rows = d3["results"][m]
@@ -428,8 +428,8 @@ def build_report(d2: Dict[str, Any], d3: Dict[str, Any], out_path: str):
             f"{np.mean(th):.4f} | {feas}/{len(rows)} | {c_str} | {np.mean(tm):.1f}s |"
         )
 
-    lines.append("\n### 3D Paired Statistical Tests (10 Paired Seeds)\n")
-    lines.append("| Comparison | Δ Power (kW) | Rel. % | Win Rate | Paired t | p (t-test) | p (Wilcoxon) | Cohen's d |")
+    lines.append("\n### 3D 配对显著性统计检验（10 组配对随机种子）\n")
+    lines.append("| 对比组 | 功率均值差 Δ (kW) | 相对提升 | 胜率 | 配对 t 值 | p (t 检验) | p (Wilcoxon) | 效应量 Cohen's d |")
     lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
     pairs_3d = [
         ("TR-MALIBO", "MALIBO"),
@@ -453,7 +453,7 @@ def build_report(d2: Dict[str, Any], d3: Dict[str, Any], out_path: str):
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"Saved statistical summary report to {out_path}")
+    print(f"已生成中文统计汇总报告: {out_path}")
 
 
 def main():

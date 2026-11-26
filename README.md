@@ -1,77 +1,89 @@
-# MALIBO-Upgrade: Trust-Region & LLM-Guided Likelihood-Free Bayesian Meta-Learning for High-Dimensional Aerodynamic Shape Optimization
+# MALIBO-Upgrade：面向高维气动外形优化的信任域与 LLM 引导无似然贝叶斯元学习
 
-A 100% self-contained, decoupled ablation benchmark evaluating two principled upgrades to **MALIBO** (Pan et al., ICML 2024) across both **2D Constrained Airfoil Design ($D=18$)** and **3D NREL Phase VI Wind Turbine Blade Design ($D=63$)** under a strict 300-evaluation budget (`NFE = 300`, 10 independent seeds, zero data leakage, zero heuristic fallback).
+本项目是一个**完全解耦、零跨目录依赖**的独立消融实验仓库，围绕原版 **MALIBO**（Pan et al., ICML 2024）的两项核心升级思路开展系统性 $2\times 2$ 消融验证，覆盖 **2D 强约束翼型优化（$D=18$）** 与 **3D NREL Phase VI 风力机叶片优化（$D=63$）** 两个跨维度气动基准（统一预算 `NFE = 300`，10 颗独立随机种子，严格零数据泄漏、零静默启发式降级）。
 
-## 1. $2 \times 2$ Factorial Ablation Design
+---
 
-All three upgraded MALIBO variants reuse the exact pretrained zero-leakage MALIBO ResFFN checkpoints (`weights/malibo_2d_checkpoint.pt` trained on 250 2D tasks; `weights/malibo_3d_checkpoint.pt` trained on 100 3D tasks), identical 10 random seeds (`42, 123, 256, 777, 1024, 2024, 3407, 5555, 8888, 9999`), and bit-for-bit identical `n_init = 15` initializations against frozen baselines (`baselines/baseline_2d_results.json`, `baselines/baseline_3d_results.json`):
+## 1. $2 \times 2$ 消融实验设计
 
-| Method | Surrogate | Adaptive Trust Region (TuRBO-1 style) | Stagnation-Adaptive LLM Offset Injection | Source |
+3 个升级变体严格复用已有的零泄漏预训练 MALIBO ResFFN 权重（`weights/malibo_2d_checkpoint.pt`，250 个 2D 训练任务；`weights/malibo_3d_checkpoint.pt`，100 个 3D 训练任务），与冻结基线（`baselines/baseline_2d_results.json`、`baselines/baseline_3d_results.json`）保持 10 颗种子（`42, 123, 256, 777, 1024, 2024, 3407, 5555, 8888, 9999`）与前 15 步初始采样点（`n_init = 15`）的**比特级一致**：
+
+| 方法 | 代理模型 | 自适应信任域（仿 TuRBO-1） | LLM 停滞自适应偏移量注入 | 数据来源 |
 | :--- | :--- | :---: | :---: | :--- |
-| **TuRBO-1** (`Vanilla-TuRBO`) | Matérn-5/2 GP | Yes | No | Frozen baseline |
-| **MALIBO** (Paper-Exact) | Meta-ResFFN + Laplace TS + GBDT | No (Global $[0,1]^D$) | No | Frozen baseline |
-| **TR-MALIBO** | Meta-ResFFN + Laplace TS + GBDT | **Yes** | No | **Upgrade 1 (TR only)** |
-| **LLM-MALIBO** | Meta-ResFFN + Laplace TS + GBDT | No (Global $[0,1]^D$) | **Yes** | **Upgrade 2 (LLM only)** |
-| **LLM-TR-MALIBO** | Meta-ResFFN + Laplace TS + GBDT | **Yes** | **Yes** | **Upgrade 3 (TR + LLM)** |
-| **LLM-Meta-TuRBO** | Matérn-5/2 GP | Yes | Yes | Frozen baseline |
+| **TuRBO-1** (`Vanilla-TuRBO`) | Matérn-5/2 高斯过程（GP） | 是 | 否 | 冻结基线（免重跑） |
+| **MALIBO（原版）** | Meta-ResFFN + Laplace TS + 残差 GBDT | 否（全局 $[0,1]^D$） | 否 | 冻结基线（免重跑） |
+| **TR-MALIBO** | Meta-ResFFN + Laplace TS + 残差 GBDT | **是** | 否 | **升级变体 1（只加信任域）** |
+| **LLM-MALIBO** | Meta-ResFFN + Laplace TS + 残差 GBDT | 否（全局 $[0,1]^D$） | **是** | **升级变体 2（只加 LLM）** |
+| **LLM-TR-MALIBO** | Meta-ResFFN + Laplace TS + 残差 GBDT | **是** | **是** | **升级变体 3（信任域 + LLM）** |
+| **LLM-Meta-TuRBO** | Matérn-5/2 高斯过程（GP） | 是 | 是 | 冻结基线（免重跑） |
 
-### Key Algorithmic Upgrades
-1. **Trust-Region Candidate Localization (`TR-MALIBO`)**: Replaces Paper-Exact MALIBO's global uniform 5,120-point search over $[0,1]^D$ with a TuRBO-1 adaptive local trust region $[x_{\text{best}} \pm L/2]$ and sparse coordinate perturbation probability $p_{\text{perturb}} = \min(20/D, 1)$ ($L_0=0.8$, $L_{\min}=0.5^7$, $L_{\max}=1.6$, $\tau_s=3$, $\tau_f=4$ in 2D / $6$ in 3D), resolving both late-stage exploitation saturation in 18D and the $0/5{,}120$ feasibility collapse in 63D.
-2. **Zero-Leakage LLM Directional Offset Injection (`LLM-MALIBO` & `LLM-TR-MALIBO`)**: Couples MALIBO with a local live LLM meta-controller (`Qwen/Qwen3.8-27B-FP8` via SGLang, non-thinking direct JSON mode, zero fallback) triggered at Step 16 (`post_init`) and genuine stagnation ($\ge 10$ steps, interval $\ge 18$, step $\le 180$), proposing smooth orthogonal physical deformation modes (4 symmetric modes in 2D; 12 Root/Mid/Tip modes in 3D), analytical zero-NFE geometry backtracking, 30% directional candidate injection (15 steps), temporary TR modulation (in `LLM-TR-MALIBO`), and Laplace posterior Thompson-sampling temperature $\hat{\mathbf{z}} = \mathbf{z}_{\text{MAP}} + \tau_{\text{TS}}\mathbf{L}^{-T}\bm{\epsilon}$.
+### 两项核心升级机制
+1. **局部自适应信任域（`TR-MALIBO`）**：效仿从经典 BO 到 TuRBO-1 的升级路径，将原版 MALIBO 在全空间 $[0,1]^D$ 的 5,120 点均匀随机搜索替换为以当前可行最优解 $\mathbf{x}_{\text{best}}$ 为中心的自适应局部信任域 $[\mathbf{x}_{\text{best}} \pm L/2]$，并引入稀疏坐标扰动概率 $p_{\text{perturb}} = \min(20/D, 1)$（超参严格对齐基线 TuRBO-1：$L_0=0.8, L_{\min}=0.5^7, L_{\max}=1.6, \tau_s=3, \tau_f=4$ [2D] / $6$ [3D]），彻底解决 18D 后期收敛饱和与 63D 全局采样 `0/5,120` 不可行死锁。
+2. **零泄漏 LLM 宏观偏移量注入（`LLM-MALIBO` & `LLM-TR-MALIBO`）**：接入本地 SGLang 实时推理的 `Qwen/Qwen3.8-27B-FP8`（非思考直出 JSON 模式，严禁静默降级），在第 16 步（`post_init`）及真实停滞（连续 $\ge 10$ 步无提升、最小间隔 18 步、上限第 180 步）触发，沿正交平滑物理形变模态（2D 共 4 个对称模态；3D 共 12 个叶根/中段/叶尖模态）提出宏观偏移量，经零 NFE 解析几何回退校验后直接评估 1 步，并在随后 15 步内将 30% 的候选切片沿该单位方向注入；同时支持对拉普拉斯 Thompson 采样温度 $\hat{\mathbf{z}} = \mathbf{z}_{\text{MAP}} + \tau_{\text{TS}}\mathbf{L}^{-T}\bm{\epsilon}$ 以及（在 `LLM-TR-MALIBO` 中）临时信任域尺度的动态调节。
 
 ---
 
-## 2. Main Experimental Results (10 Paired Seeds, 100% Feasible)
+## 2. 核心实验结果汇总（10 颗随机种子，100% 可行）
 
-### Case 1: 2D Constrained Airfoil (NACA 0012, $Re = 3.5\times 10^6, \alpha = 3.5^\circ$, $D=18$, $\text{NFE}=300$)
+完整配对 $t$ 检验、Wilcoxon 检验与效应量 Cohen's $d$ 详见 [results/ablation_summary_report.md](results/ablation_summary_report.md)。
 
-| Method | Step-15 | Final Mean ± SD ($L/D$) | Median [Min, Max] | NFE $\ge 200$ | $\Delta$ vs. MALIBO | $\Delta$ vs. TuRBO-1 | Avg LLM Calls |
+### 算例一：2D 强约束翼型优化（NACA 0012，$Re=3.5\times 10^6, \alpha=3.5^\circ$，$D=18$，`NFE=300`）
+
+| 方法 | Step-15 | 最终均值 ± 标准差 ($L/D$) | 中位数 [最小, 最大] | 达 200 步数 | 较原版 MALIBO | 较 TuRBO-1 | 平均 LLM 调用 |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| Vanilla-TuRBO | 72.47 ± 2.24 | $195.73 \pm 12.32$ | 198.97 [164.2, 207.6] | -- | $+15.92$ ($+8.9\%$) | Baseline | -- |
-| MALIBO (Orig.) | 72.47 ± 2.24 | $179.81 \pm 9.29$ | 180.00 [166.7, 192.9] | -- | Baseline | $-15.92$ ($-8.1\%$) | -- |
-| **LLM-MALIBO** | 72.47 ± 2.24 | $187.36 \pm 12.95$ | 183.38 [166.8, 212.2] | -- | $+7.56$ ($+4.2\%$) | $-8.36$ ($-4.3\%$) | 8.7 |
-| **TR-MALIBO** | 72.47 ± 2.24 | **$229.62 \pm 12.70$** | 232.40 [211.2, 245.9] | 100 | **$+49.81$ ($+27.7\%$)** ($p=10^{-5}$) | **$+33.89$ ($+17.3\%$)** ($p=4.3\times 10^{-4}$) | 0 |
+| Vanilla-TuRBO | 72.47 ± 2.24 | $195.73 \pm 12.32$ | 198.97 [164.2, 207.6] | -- | $+15.92$ ($+8.9\%$) | 基线 | -- |
+| MALIBO（原版） | 72.47 ± 2.24 | $179.81 \pm 9.29$ | 180.00 [166.7, 192.9] | -- | 基线 | $-15.92$ ($-8.1\%$) | -- |
+| **LLM-MALIBO**（只加 LLM） | 72.47 ± 2.24 | $187.36 \pm 12.95$ | 183.38 [166.8, 212.2] | -- | $+7.56$ ($+4.2\%$) | $-8.36$ ($-4.3\%$) | 8.7 |
+| **TR-MALIBO**（只加信任域） | 72.47 ± 2.24 | **$229.62 \pm 12.70$** | 232.40 [211.2, 245.9] | 100 | **$+49.81$ ($+27.7\%$)** ($p=10^{-5}$) | **$+33.89$ ($+17.3\%$)** ($p=0.0004$) | 0 |
 | LLM-Meta-TuRBO | 72.47 ± 2.24 | $227.40 \pm 13.41$ | 225.10 [200.8, 247.1] | 120 | $+47.59$ ($+26.5\%$) | $+31.67$ ($+16.2\%$) | 5.1 |
-| **LLM-TR-MALIBO** | 72.47 ± 2.24 | **$235.94 \pm 10.95$** | **237.58** [206.5, 248.2] | **99** | **$+56.13$ ($+31.2\%$)** ($p<10^{-5}$) | **$+40.21$ ($+20.5\%$)** ($p=2\times 10^{-5}$) | **2.9** |
+| **LLM-TR-MALIBO**（都加） | 72.47 ± 2.24 | **$235.94 \pm 10.95$** | **237.58** [206.5, **248.2**] | **99** | **$+56.13$ ($+31.2\%$)** ($p<10^{-5}$) | **$+40.21$ ($+20.5\%$)** ($p=2\times 10^{-5}$) | **2.9** |
 
-### Case 2: 3D NREL Phase VI Wind Turbine Blade ($V_\infty = 7.0\,\text{m/s}$, $72\,\text{rpm}$, $D=63$, Baseline $= 6.0884\,\text{kW}$, $\text{NFE}=300$)
+### 算例二：3D NREL Phase VI 风力机叶片优化（$V_\infty=7.0\,\text{m/s}, 72\,\text{rpm}$，$D=63$，基准 $6.0884\,\text{kW}$，`NFE=300`）
 
-| Method | Step-15 (kW) | Power Mean ± SD (kW) | Median [Min, Max] | Gain vs. Base | NFE $\ge 6.50$ | Avg Thrust (kN) | Avg LLM Calls |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| TuRBO-1 | 6.1773 ± 0.0280 | $6.5920 \pm 0.0463$ | 6.5717 [6.507, 6.653] | $+8.27\%$ | 68 | 1.3938 | -- |
-| MALIBO (Orig.) | 6.1773 ± 0.0280 | $6.1773 \pm 0.0280$ | 6.1812 [6.125, 6.228] | $+1.46\%$ | -- | 1.2417 | -- |
-| **LLM-MALIBO** | 6.1773 ± 0.0280 | $6.6464 \pm 0.0595$ | 6.6742 [6.500, 6.706] | $+9.16\%$ | 52 | 1.3788 | 9.7 |
-| **TR-MALIBO** | 6.1773 ± 0.0280 | **$6.6575 \pm 0.0291$** | 6.6653 [6.607, 6.693] | $+9.35\%$ | 60 | 1.3946 | 0 |
-| LLM-Meta-TuRBO | 6.1773 ± 0.0280 | $6.6664 \pm 0.0196$ | 6.6573 [6.646, 6.696] | $+9.49\%$ | **36** | 1.3948 | 7.2 |
-| **LLM-TR-MALIBO** | 6.1773 ± 0.0280 | **$6.6689 \pm 0.0199$** | **6.6665** [6.642, **6.706**] | **$+9.53\%$** | 39 | 1.3940 | 7.3 |
+| 方法 | Step-15 (kW) | 最终功率均值 ± 标准差 (kW) | 中位数 [最小, 最大] | 较基准提升 | 达 6.50 步数 | 平均推力 (kN) | 平均 LLM 调用 | 单种子耗时 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| TuRBO-1 | 6.1773 ± 0.0280 | $6.5920 \pm 0.0463$ | 6.5717 [6.507, 6.653] | $+8.27\%$ | 68 | 1.3938 | -- | 70.9s |
+| MALIBO（原版） | 6.1773 ± 0.0280 | $6.1773 \pm 0.0280$ | 6.1812 [6.125, 6.228] | $+1.46\%$ | -- | 1.2417 | -- | 111.0s |
+| **LLM-MALIBO**（只加 LLM） | 6.1773 ± 0.0280 | $6.6464 \pm 0.0595$ | 6.6742 [6.500, 6.706] | $+9.16\%$ | 52 | 1.3788 | 9.7 | 245.5s |
+| **TR-MALIBO**（只加信任域） | 6.1773 ± 0.0280 | **$6.6575 \pm 0.0291$** | 6.6653 [6.607, 6.693] | $+9.35\%$ | 60 | 1.3946 | 0 | 168.4s |
+| LLM-Meta-TuRBO | 6.1773 ± 0.0280 | $6.6664 \pm 0.0196$ | 6.6573 [6.646, 6.696] | $+9.49\%$ | **36** | 1.3948 | 7.2 | 157.9s |
+| **LLM-TR-MALIBO**（都加） | 6.1773 ± 0.0280 | **$6.6689 \pm 0.0199$** | **6.6665** [6.642, **6.706**] | **$+9.53\%$** | 39 | 1.3940 | 7.3 | 243.6s |
 
 ---
 
-## 3. Repository Layout & Reproduction
+## 3. 主要科学结论
+
+1. **信任域（`TR-MALIBO`）是释放高维强约束 MALIBO 潜力的最核心结构升级**：零 LLM 调用即可在 2D 显著击败原版 MALIBO（$+27.7\%$）与 TuRBO-1（$+17.3\%, p=0.00043$），甚至反超 `LLM-Meta-TuRBO`；在 3D 将原版 MALIBO 从完全死锁的 `6.1773 kW` 拉升至 `6.6575 kW`（显著击败 `TuRBO-1` $+0.0655\,\text{kW}, p=0.00399$）。
+2. **仅加 LLM（`LLM-MALIBO`）呈现“脱困有效、局部精修不足”的特征**：在 3D 成功打破全局采样的 `0/5,120` 死锁（拉升至 `6.6464 kW`），但缺少信任域导致第 195 步后完全停滞且跨种子方差高达 `0.0595 kW`（为 `LLM-TR-MALIBO` 的 3 倍）；在 2D 也仅提升至 `187.36`。
+3. **双机制协同（`LLM-TR-MALIBO`）在 2D 与 3D 双双夺冠**：2D 取得全场最高均值 `235.94 ± 10.95`、中位数 `237.58`、峰值 `248.19`，且平均仅触发 `2.9` 次 LLM 调用；3D 取得全场最高均值 `6.6689 kW (+9.53%)`、中位数 `6.6665 kW` 与全场最高峰值 `6.7061 kW (+10.14%)`。
+
+---
+
+## 4. 目录结构与复现命令
 
 ```text
 MALIBO-upgrade/
-├── baselines/            # Frozen 10-seed 2D & 3D baseline JSONs (TuRBO-1, MALIBO, LLM-Meta-TuRBO)
-├── weights/              # Pretrained zero-leakage 2D (18D) & 3D (63D) MALIBO ResFFN checkpoints
-├── data/                 # NREL Phase VI 31-section full-cosine baseline (.npz)
-├── src/case_2d/          # Decoupled 2D evaluator, MALIBO core, LLM agent, and upgraded optimizers
-├── src/case_3d/          # Decoupled 3D evaluator, parameterization, MALIBO core, LLM agent, and upgraded optimizers
-├── run_benchmark_2d.py   # 10-seed parallel 2D ablation runner
-├── run_benchmark_3d.py   # 10-seed parallel 3D ablation runner
-├── plot_ablation.py      # Publication-grade figures & paired statistical report generator
-├── results/              # Unified 6-method JSON/NPZ results & ablation_summary_report.md
-└── figures/              # Vector PDF & 300 DPI PNG figures (fig1–fig5)
+├── baselines/            # 冻结的 2D/3D 10 种子基线 JSON（TuRBO-1、MALIBO、LLM-Meta-TuRBO）
+├── weights/              # 预训练零泄漏 2D (18D) 与 3D (63D) MALIBO ResFFN 权重
+├── data/                 # NREL Phase VI 31 截面全余弦基准数据 (.npz)
+├── src/case_2d/          # 完全独立的 2D 评估器、MALIBO 核心、LLM 智能体与升级优化器
+├── src/case_3d/          # 完全独立的 3D 评估器、参数化、MALIBO 核心、LLM 智能体与升级优化器
+├── run_benchmark_2d.py   # 2D 10 种子并行消融测试脚本
+├── run_benchmark_3d.py   # 3D 10 种子并行消融测试脚本
+├── plot_ablation.py      # 出版级纯实线对比图与中文统计报告生成脚本
+├── results/              # 合并后的 6 方法 JSON/NPZ 数据及中文统计报告
+└── figures/              # 矢量 PDF 与 300 DPI PNG 图表（fig1–fig5）
 ```
 
-### Reproduce Commands
+### 复现步骤
 ```bash
-# 1. Start local SGLang server (Qwen/Qwen3.8-27B-FP8 on port 30000)
+# 1. 启动本地 SGLang 大模型服务（Qwen/Qwen3.8-27B-FP8，端口 30000）
 bash launch_sglang.sh
 
-# 2. Run 2D & 3D 10-seed ablation benchmarks (only runs TR-MALIBO, LLM-MALIBO, LLM-TR-MALIBO)
+# 2. 运行 2D 与 3D 10 种子消融实验（仅运行 TR-MALIBO、LLM-MALIBO、LLM-TR-MALIBO）
 python run_benchmark_2d.py --n_workers 5 --device cpu
 python run_benchmark_3d.py --n_workers 5 --device cpu
 
-# 3. Generate figures and full statistical tests
+# 3. 生成全套纯色实线对比图与中文统计报告
 python plot_ablation.py
 ```
