@@ -1,9 +1,10 @@
-"""Upgraded 2D MALIBO Optimizers for Systematic 2x2 Ablation Study:
-1. TR-MALIBO      (use_trust_region=True,  use_llm=False): Trust-Region MALIBO (emulating BO -> TuRBO-1)
-2. LLM-MALIBO     (use_trust_region=False, use_llm=True):  Global MALIBO + LLM directional offset injection
-3. LLM-TR-MALIBO  (use_trust_region=True,  use_llm=True):  Trust-Region MALIBO + LLM meta-control & offset injection
+"""CoLT-MALIBO (Constrained LLM-guided Trust-Region MALIBO) 2D Optimizer & Ablation Suite:
+- CoLT-MALIBO : Full method (Obj-TR + Con-TR + LLM + feasibility-aware TR contraction + gamma annealing)
+- w/o LLM     : Removes LLM directional offset injection & meta-control
+- w/o Obj-TR  : Removes TuRBO-style objective trust-region box (global + Con-TR + LLM)
+- w/o Con-TR  : Removes SCBO-style Matérn-5/2 constrained feasibility surrogate (Obj-TR + LLM)
 
-Strict parity with existing 2D baselines (Vanilla-TuRBO, Paper-Exact MALIBO, LLM-Meta-TuRBO):
+Strict parity with frozen 2D baselines (TuRBO-1, Paper-Exact MALIBO, LLM-Meta-TuRBO):
 - Exact same 10 seeds, NFE=300, n_init=15 (NACA0012 + 14 symmetric ±0.03 perturbations -> Step-15 = 72.47 ± 2.24);
 - Exact same pretrained 250-task 2D MALIBO ResFFN checkpoint (zero test leakage);
 - Exact same TuRBO-1 trust-region state machine (L_init=0.8, L_min=0.5**7, L_max=1.6, success_tol=3, failure_tol=4);
@@ -83,7 +84,8 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
         stag_threshold: int = 10,
         min_intervention_interval: int = 18,
         global_dir_ref_scale: float = 0.4,
-        use_constrained_acq: bool = True,
+        use_feas_surrogate: bool = True,
+        use_gamma_annealing: bool = True,
         feas_lengthscale: float = 0.35,
         feas_tau: float = 0.55,
         feas_beta: float = 2.0,
@@ -143,7 +145,8 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
         self.intervention_history: List[Dict[str, Any]] = []
 
         # Constrained / OOD-Aware acquisition & feasibility-aware TR settings (unified across 2D & 3D)
-        self.use_constrained_acq = bool(use_constrained_acq)
+        self.use_feas_surrogate = bool(use_feas_surrogate)
+        self.use_gamma_annealing = bool(use_gamma_annealing)
         self.feas_lengthscale = float(feas_lengthscale)
         self.feas_tau = float(feas_tau)
         self.feas_beta = float(feas_beta)
@@ -152,12 +155,14 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
 
     @property
     def variant_name(self) -> str:
-        if self.use_trust_region and self.use_llm:
-            return "LLM-TR-MALIBO"
-        if self.use_trust_region:
-            return "TR-MALIBO"
-        if self.use_llm:
-            return "LLM-MALIBO"
+        if self.use_trust_region and self.use_llm and self.use_feas_surrogate:
+            return "CoLT-MALIBO"
+        if self.use_trust_region and (not self.use_llm) and self.use_feas_surrogate:
+            return "w/o LLM"
+        if (not self.use_trust_region) and self.use_llm and self.use_feas_surrogate:
+            return "w/o Obj-TR"
+        if self.use_trust_region and self.use_llm and (not self.use_feas_surrogate):
+            return "w/o Con-TR"
         return "MALIBO"
 
     def get_state(self) -> np.ndarray:
@@ -175,11 +180,7 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
             self.n_failure = 0
         else:
             self.n_success = 0
-            fail_inc = (
-                self.infeas_failure_weight
-                if (self.use_constrained_acq and not is_feasible)
-                else 1
-            )
+            fail_inc = self.infeas_failure_weight if (not is_feasible) else 1
             self.n_failure += fail_inc
 
         if self.n_success >= self.success_tol:
@@ -341,7 +342,7 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
             y_norm = (y_clean - y_mean) / y_std_val
             gamma_t = (
                 annealed_lfbo_gamma(step, self.n_init, self.max_evals, self.gamma, self.gamma_end)
-                if self.use_constrained_acq
+                if self.use_gamma_annealing
                 else self.gamma
             )
             tau_std = float(np.quantile(y_norm, gamma_t))
@@ -400,7 +401,7 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
                 z_sample=z_sample,
                 use_raw_margin=True,
             )
-            if self.use_constrained_acq:
+            if self.use_feas_surrogate:
                 acq_scores = compute_constrained_lfbo_acquisition(
                     raw_utilities=raw_utilities,
                     X_obs=X_arr,

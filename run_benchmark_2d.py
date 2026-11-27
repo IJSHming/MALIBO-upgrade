@@ -1,16 +1,18 @@
-"""2D Airfoil 6-Method Ablation Benchmark Runner (NACA 0012, Re=3.5e6, AoA=3.5 deg, D=18, NFE=300, 10 seeds).
+"""2D Airfoil 7-Method Main & Ablation Benchmark Runner (NACA 0012, Re=3.5e6, AoA=3.5 deg, D=18, NFE=300, 10 seeds).
 
-Reuses frozen 10-seed baseline data from `baselines/baseline_2d_results.json`:
-  - Vanilla-TuRBO
-  - MALIBO (Paper-Exact)
-  - LLM-Meta-TuRBO
+Group 1 (Main Comparison — Baselines vs. Proposed Full Method):
+  - Vanilla-TuRBO  (frozen baseline)
+  - MALIBO         (frozen baseline, Paper-Exact)
+  - LLM-Meta-TuRBO (frozen baseline)
+  - CoLT-MALIBO    (Full upgraded MALIBO: Obj-TR + Con-TR + LLM)
 
-Runs ONLY the 3 upgraded MALIBO variants (10 seeds each, strict n_init=15 parity):
-  - TR-MALIBO     (Trust-Region only)
-  - LLM-MALIBO    (LLM directional offset injection only)
-  - LLM-TR-MALIBO (Trust-Region + LLM meta-control & offset injection)
+Group 2 (Ablation Study — Full Method vs. Single-Component Removals):
+  - CoLT-MALIBO    (Full)
+  - w/o LLM        (Removes LLM offset injection & meta-control)
+  - w/o Obj-TR     (Removes TuRBO objective trust-region box)
+  - w/o Con-TR     (Removes SCBO Matérn-5/2 constrained feasibility surrogate)
 
-Saves unified 6-method results to `results/ablation_2d_results.json` and `.npz`.
+Saves unified 7-method results to `results/ablation_2d_results.json` and `.npz`.
 """
 
 import os
@@ -37,18 +39,26 @@ from src.case_2d.malibo_core import load_2d_malibo_model
 from src.case_2d.upgraded_malibo import UpgradedMALIBO2DOptimizer
 
 BENCHMARK_SEEDS = [42, 123, 256, 777, 1024, 2024, 3407, 5555, 8888, 9999]
+# (use_trust_region, use_llm, use_feas_surrogate)
 VARIANT_SPECS = {
-    "TR-MALIBO": (True, False),
-    "LLM-MALIBO": (False, True),
-    "LLM-TR-MALIBO": (True, True),
+    "CoLT-MALIBO": (True, True, True),
+    "w/o LLM": (True, False, True),
+    "w/o Obj-TR": (False, True, True),
+    "w/o Con-TR": (True, True, False),
+}
+LEGACY_KEY_MAP = {
+    "LLM-TR-MALIBO": "CoLT-MALIBO",
+    "TR-MALIBO": "w/o LLM",
+    "LLM-MALIBO": "w/o Obj-TR",
 }
 METHOD_ORDER = [
     "Vanilla-TuRBO",
     "MALIBO",
-    "TR-MALIBO",
-    "LLM-MALIBO",
-    "LLM-TR-MALIBO",
     "LLM-Meta-TuRBO",
+    "CoLT-MALIBO",
+    "w/o LLM",
+    "w/o Obj-TR",
+    "w/o Con-TR",
 ]
 
 
@@ -63,7 +73,7 @@ def _worker_init():
 
 def _run_2d_variant_seed(args: Tuple[str, int, float, float, int, str, str, str, str]) -> Dict[str, Any]:
     variant, seed, reynolds, alpha, max_evals, ckpt_path, llm_url, llm_model, device_str = args
-    use_tr, use_llm = VARIANT_SPECS[variant]
+    use_tr, use_llm, use_feas = VARIANT_SPECS[variant]
     device = torch.device(device_str)
     meta_model = load_2d_malibo_model(ckpt_path, device=device)
 
@@ -82,6 +92,9 @@ def _run_2d_variant_seed(args: Tuple[str, int, float, float, int, str, str, str,
         evaluator=evaluator,
         use_trust_region=use_tr,
         use_llm=use_llm,
+        use_feas_surrogate=use_feas,
+        use_gamma_annealing=True,
+        infeas_failure_weight=2,
         x0=x0,
         bounds=(lb, ub),
         max_evals=max_evals,
@@ -140,7 +153,7 @@ def _save_2d_results(
         rows = results.get(name, [])
         if not rows:
             continue
-        key = name.lower().replace("-", "_")
+        key = name.lower().replace("/", "").replace(" ", "_").replace("-", "_")
         npz_dict[f"{key}_scores"] = np.array([r["best_score"] for r in rows], dtype=np.float64)
         npz_dict[f"{key}_histories"] = np.array([r["history"] for r in rows], dtype=np.float64)
     np.savez_compressed(output_npz, **npz_dict)
@@ -180,7 +193,7 @@ def main():
     parser.add_argument("--output_npz", type=str, default="results/ablation_2d_results.npz")
     parser.add_argument("--llm_url", type=str, default="http://127.0.0.1:30000/v1")
     parser.add_argument("--llm_model", type=str, default="Qwen/Qwen3.8-27B-FP8")
-    parser.add_argument("--variants", type=str, default="TR-MALIBO,LLM-MALIBO,LLM-TR-MALIBO")
+    parser.add_argument("--variants", type=str, default="CoLT-MALIBO,w/o LLM,w/o Obj-TR,w/o Con-TR")
     parser.add_argument("--seeds", type=str, default=",".join(str(s) for s in BENCHMARK_SEEDS))
     parser.add_argument("--n_workers", type=int, default=5)
     parser.add_argument("--device", type=str, default="cpu")
@@ -207,6 +220,14 @@ def main():
     if not args.force_rerun and os.path.exists(args.output_json):
         with open(args.output_json, "r", encoding="utf-8") as f:
             prev = json.load(f).get("results", {})
+        for old_k, new_k in LEGACY_KEY_MAP.items():
+            if old_k in prev and new_k not in prev:
+                migrated = []
+                for row in prev[old_k]:
+                    r_copy = dict(row)
+                    r_copy["method"] = new_k
+                    migrated.append(r_copy)
+                results[new_k] = migrated
         for v in VARIANT_SPECS:
             if v in prev:
                 results[v] = prev[v]

@@ -250,7 +250,7 @@ def loft_blade_3d(
     严格围绕 NREL Phase VI 官方 30% 弦长俯仰/扭转中心轴 (PITCH_AXIS_FRAC = 0.30) 放样。
     """
     if len(x) == 63:
-        from src.parameterizations import BSplineBladeModel
+        from src.case_3d.parameterizations import BSplineBladeModel
         model_bs = BSplineBladeModel()
         span_data = model_bs.to_span_data(x, n_stations=n_span)
     else:
