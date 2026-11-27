@@ -440,6 +440,7 @@ def build_report(d2: Dict[str, Any], d3: Dict[str, Any], out_path: str):
         ("LLM-TR-MALIBO", "LLM-MALIBO"),
         ("LLM-TR-MALIBO", "TuRBO"),
         ("LLM-TR-MALIBO", "LLM-Meta-TuRBO"),
+        ("LLM-MALIBO", "LLM-Meta-TuRBO"),
     ]
     for a_name, b_name in pairs_3d:
         a = np.array([r["best_score"] for r in d3["results"][a_name]])
@@ -450,6 +451,51 @@ def build_report(d2: Dict[str, Any], d3: Dict[str, Any], out_path: str):
             f"| {a_name} vs. {b_name} | {st['delta']:+.4f} | {rel:+.2f}% | {st['wins']}/{st['n']} | "
             f"{st['t']:+.3f} | {st['p_t']:.5f} | {st['p_w']:.5f} | {st['cohen_d']:+.2f} |"
         )
+
+    # 添加关键步数节点对比（NFE = 25, 50, 100, 150, 200, 300）
+    lines.append("\n## 4. 全程样本效率对比（各关键 NFE 节点 10 种子均值）\n")
+    for title_c, res_c, ord_c, fmt_c in [
+        ("### 2D 翼型（L/D）", d2["results"], ORDER_2D, "{:.2f}"),
+        ("### 3D 风机叶片（功率 kW）", d3["results"], ORDER_3D, "{:.4f}"),
+    ]:
+        lines.append(title_c + "\n")
+        lines.append("| 方法 | NFE=25 | NFE=50 | NFE=100 | NFE=150 | NFE=200 | NFE=300 | 在线可行率 (Post-Init) |")
+        lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
+        for m in ord_c:
+            rows = res_c[m]
+            mh = np.mean(np.array([r["history"][:300] for r in rows]), axis=0)
+            pfr = [r["post_init_feasibility_rate"] for r in rows if "post_init_feasibility_rate" in r]
+            pfr_str = f"{100.0 * np.mean(pfr):.1f}%" if pfr else "--"
+            cols = " | ".join(fmt_c.format(mh[k - 1]) for k in [25, 50, 100, 150, 200, 300])
+            lines.append(f"| **{m}** | {cols} | {pfr_str} |")
+        lines.append("")
+
+    # 添加 v1（朴素 TR）vs v2（Empirical-Bayes 可行性与 OOD 感知约束）升级对比
+    v1_2d_path = "results/archive_v1_naive_tr/ablation_2d_results.json"
+    v1_3d_path = "results/archive_v1_naive_tr/ablation_3d_results.json"
+    if os.path.exists(v1_2d_path) and os.path.exists(v1_3d_path):
+        with open(v1_2d_path, "r", encoding="utf-8") as f:
+            v1_2d = json.load(f)["results"]
+        with open(v1_3d_path, "r", encoding="utf-8") as f:
+            v1_3d = json.load(f)["results"]
+
+        lines.append("## 5. 约束感知核心模块消融：旧版 v1（朴素 TR）vs. 新版 v2（EB 可行性与 OOD 感知 c-LFBO）\n")
+        lines.append("| 算例与变体 | v1 均值 ± 标准差 | v2 均值 ± 标准差 | 均值提升 Δ | 标准差变化 | v1→v2 配对胜率 | p (t 检验) |")
+        lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: |")
+        for case_lbl, v1_r, v2_r, fmt_s, fmt_d in [
+            ("2D", v1_2d, d2["results"], "{:.2f}", "{:+.2f}"),
+            ("3D", v1_3d, d3["results"], "{:.4f}", "{:+.4f}"),
+        ]:
+            for vname in ["TR-MALIBO", "LLM-MALIBO", "LLM-TR-MALIBO"]:
+                a = np.array([r["best_score"] for r in v2_r[vname]])
+                b = np.array([r["best_score"] for r in v1_r[vname]])
+                st = paired_stats(a, b)
+                sd_pct = (np.std(a) - np.std(b)) / max(np.std(b), 1e-9) * 100.0
+                lines.append(
+                    f"| **{case_lbl} {vname}** | {fmt_s.format(np.mean(b))} ± {fmt_s.format(np.std(b))} | "
+                    f"**{fmt_s.format(np.mean(a))} ± {fmt_s.format(np.std(a))}** | **{fmt_d.format(st['delta'])}** | "
+                    f"{sd_pct:+.1f}% | {st['wins']}/{st['n']} | {st['p_t']:.5f} |"
+                )
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")

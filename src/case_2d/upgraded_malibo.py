@@ -26,6 +26,10 @@ from src.case_2d.malibo_core import (
     MALIBOMetaModel2D,
     MALIBOResidualBooster2D,
 )
+from src.constrained_acquisition import (
+    annealed_lfbo_gamma,
+    compute_constrained_lfbo_acquisition,
+)
 
 
 def convert_directional_strategy(strat: Optional[Dict[str, Any]]) -> np.ndarray:
@@ -79,6 +83,12 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
         stag_threshold: int = 10,
         min_intervention_interval: int = 18,
         global_dir_ref_scale: float = 0.4,
+        use_constrained_acq: bool = True,
+        feas_lengthscale: float = 0.35,
+        feas_tau: float = 0.55,
+        feas_beta: float = 2.0,
+        gamma_end: float = 0.15,
+        infeas_failure_weight: int = 2,
         device: Optional[torch.device] = None,
     ):
         super().__init__(evaluator, x0, bounds, max_evals, seed, is_meta=True)
@@ -132,6 +142,14 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
         self.global_dir_ref_scale = float(global_dir_ref_scale)
         self.intervention_history: List[Dict[str, Any]] = []
 
+        # Constrained / OOD-Aware acquisition & feasibility-aware TR settings (unified across 2D & 3D)
+        self.use_constrained_acq = bool(use_constrained_acq)
+        self.feas_lengthscale = float(feas_lengthscale)
+        self.feas_tau = float(feas_tau)
+        self.feas_beta = float(feas_beta)
+        self.gamma_end = float(gamma_end)
+        self.infeas_failure_weight = int(infeas_failure_weight)
+
     @property
     def variant_name(self) -> str:
         if self.use_trust_region and self.use_llm:
@@ -148,7 +166,7 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
     def apply_action(self, action: np.ndarray):
         pass
 
-    def _adjust_trust_region(self, improved: bool) -> None:
+    def _adjust_trust_region(self, improved: bool, is_feasible: bool = True) -> None:
         if not self.use_trust_region:
             return
 
@@ -157,7 +175,12 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
             self.n_failure = 0
         else:
             self.n_success = 0
-            self.n_failure += 1
+            fail_inc = (
+                self.infeas_failure_weight
+                if (self.use_constrained_acq and not is_feasible)
+                else 1
+            )
+            self.n_failure += fail_inc
 
         if self.n_success >= self.success_tol:
             self.base_L = min(self.base_L * 2.0, self.L_max)
@@ -190,12 +213,14 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
 
         X_unit: List[np.ndarray] = []
         Y_min: List[float] = []
+        C_feas: List[float] = []
 
         # 1. Exact bit-for-bit aligned n_init = 15 initialization
         score0 = self.evaluate(self.x0)
         self.initial_score = score0
         X_unit.append(to_unit(self.x0))
         Y_min.append(-float(score0))
+        C_feas.append(1.0 if (score0 > -5.0) else 0.0)
 
         for _ in range(1, self.n_init):
             if self.eval_count >= self.max_evals:
@@ -205,6 +230,7 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
             score = self.evaluate(x_cand)
             X_unit.append(to_unit(x_cand))
             Y_min.append(-float(score))
+            C_feas.append(1.0 if (score > -5.0) else 0.0)
 
         # 2. Main optimization loop
         while self.eval_count < self.max_evals:
@@ -294,11 +320,13 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
                             self.guide_direction_steps_left = 15
 
                         cand_score = self.evaluate(cand_to_eval)
+                        cand_feas = (cand_score > -5.0)
                         X_unit.append(u_cand)
                         Y_min.append(-float(cand_score))
+                        C_feas.append(1.0 if cand_feas else 0.0)
 
                         improved = (cand_score > score_before + 1e-3)
-                        self._adjust_trust_region(improved)
+                        self._adjust_trust_region(improved, is_feasible=cand_feas)
 
                         if self.eval_count >= self.max_evals:
                             break
@@ -306,11 +334,17 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
 
             # 2b. MALIBO Laplace adaptation + 70/30 early-stopped residual GBDT
             X_arr = np.array(X_unit, dtype=np.float64)
+            C_arr = np.array(C_feas, dtype=np.float64)
             y_clean = np.minimum(np.array(Y_min, dtype=np.float64), 10.0)
             y_mean = float(np.mean(y_clean))
             y_std_val = max(float(np.std(y_clean)), 1e-4)
             y_norm = (y_clean - y_mean) / y_std_val
-            tau_std = float(np.quantile(y_norm, self.gamma))
+            gamma_t = (
+                annealed_lfbo_gamma(step, self.n_init, self.max_evals, self.gamma, self.gamma_end)
+                if self.use_constrained_acq
+                else self.gamma
+            )
+            tau_std = float(np.quantile(y_norm, gamma_t))
 
             t_X = torch.as_tensor(X_arr, dtype=torch.float32, device=self.device)
             t_y = torch.as_tensor(y_norm, dtype=torch.float32, device=self.device)
@@ -360,21 +394,37 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
                 cand_samples[:n_dir] = np.clip(dir_cands, clip_lb, clip_ub)
                 self.guide_direction_steps_left -= 1
 
-            # 2d. Maximize MALIBO residual-boosted acquisition utility
-            utilities = self.residual_booster.predict_utility(
+            # 2d. Maximize MALIBO acquisition (Constrained/OOD-Aware c-LFBO when enabled)
+            raw_utilities = self.residual_booster.predict_utility(
                 X_candidates=cand_samples,
                 z_sample=z_sample,
                 use_raw_margin=True,
             )
-            next_x_unit = cand_samples[int(np.argmax(utilities))]
+            if self.use_constrained_acq:
+                acq_scores = compute_constrained_lfbo_acquisition(
+                    raw_utilities=raw_utilities,
+                    X_obs=X_arr,
+                    c_obs=C_arr,
+                    X_cand=cand_samples,
+                    n_init=self.n_init,
+                    lengthscale=self.feas_lengthscale,
+                    tau_feas=self.feas_tau,
+                    beta=self.feas_beta,
+                )
+            else:
+                acq_scores = raw_utilities
+
+            next_x_unit = cand_samples[int(np.argmax(acq_scores))]
             next_x = from_unit(next_x_unit)
 
             new_score = self.evaluate(next_x)
+            new_feas = (new_score > -5.0)
             X_unit.append(next_x_unit)
             Y_min.append(-float(new_score))
+            C_feas.append(1.0 if new_feas else 0.0)
 
             improved = (new_score > score_before + 1e-3)
-            self._adjust_trust_region(improved)
+            self._adjust_trust_region(improved, is_feasible=new_feas)
 
         while len(self.history_best) < self.max_evals:
             self.history_best.append(self.best_score)
@@ -383,12 +433,14 @@ class UpgradedMALIBO2DOptimizer(BaseAirfoilOptimizer):
         det = self.evaluator.evaluate_detailed(self.best_x)
         coords = theta_to_coordinates(self.best_x)
 
+        post_init_feas = C_feas[self.n_init :]
         out: Dict[str, Any] = {
             "method": self.variant_name,
             "seed": self.seed,
             "best_score": float(self.best_score),
             "history": [float(v) for v in self.history_best[: self.max_evals]],
             "best_x": [float(v) for v in self.best_x],
+            "post_init_feasibility_rate": float(np.mean(post_init_feas)) if post_init_feas else 1.0,
             "coordinates": {k: v.tolist() for k, v in coords.items()},
             "detailed": {
                 "cl": float(det.get("cl", 0.0)),

@@ -27,6 +27,10 @@ from src.case_3d.malibo_core import (
     MALIBOMetaModel3D,
     MALIBOResidualBooster3D,
 )
+from src.constrained_acquisition import (
+    annealed_lfbo_gamma,
+    compute_constrained_lfbo_acquisition,
+)
 
 
 def convert_directional_strategy_to_blade_delta(
@@ -92,6 +96,12 @@ class UpgradedMALIBOBladeOptimizer(BaseBladeOptimizer):
         stag_threshold: int = 10,
         min_intervention_interval: int = 18,
         global_dir_ref_scale: float = 0.4,
+        use_constrained_acq: bool = True,
+        feas_lengthscale: float = 0.35,
+        feas_tau: float = 0.55,
+        feas_beta: float = 2.0,
+        gamma_end: float = 0.15,
+        infeas_failure_weight: int = 2,
         device: Optional[torch.device] = None,
     ):
         super().__init__(evaluator, x0, bounds, max_evals, seed)
@@ -145,6 +155,14 @@ class UpgradedMALIBOBladeOptimizer(BaseBladeOptimizer):
         self.global_dir_ref_scale = float(global_dir_ref_scale)
         self.intervention_history: List[Dict[str, Any]] = []
 
+        # Constrained / OOD-Aware acquisition & feasibility-aware TR settings (unified across 2D & 3D)
+        self.use_constrained_acq = bool(use_constrained_acq)
+        self.feas_lengthscale = float(feas_lengthscale)
+        self.feas_tau = float(feas_tau)
+        self.feas_beta = float(feas_beta)
+        self.gamma_end = float(gamma_end)
+        self.infeas_failure_weight = int(infeas_failure_weight)
+
     @property
     def variant_name(self) -> str:
         if self.use_trust_region and self.use_llm:
@@ -155,7 +173,7 @@ class UpgradedMALIBOBladeOptimizer(BaseBladeOptimizer):
             return "LLM-MALIBO"
         return "MALIBO"
 
-    def _adjust_trust_region(self, improved: bool) -> None:
+    def _adjust_trust_region(self, improved: bool, is_feasible: bool = True) -> None:
         if not self.use_trust_region:
             return
 
@@ -164,7 +182,12 @@ class UpgradedMALIBOBladeOptimizer(BaseBladeOptimizer):
             self.n_failure = 0
         else:
             self.n_success = 0
-            self.n_failure += 1
+            fail_inc = (
+                self.infeas_failure_weight
+                if (self.use_constrained_acq and not is_feasible)
+                else 1
+            )
+            self.n_failure += fail_inc
 
         if self.n_success >= self.success_tol:
             self.base_L = min(self.base_L * 2.0, self.L_max)
@@ -193,12 +216,14 @@ class UpgradedMALIBOBladeOptimizer(BaseBladeOptimizer):
 
         X_unit_list: List[np.ndarray] = []
         Y_minimize_list: List[float] = []
+        C_feas_list: List[float] = []
 
         # 1. Exact bit-for-bit aligned n_init = 15 initialization
         score0 = self.evaluate_initial()
         u0 = self.to_unit(self.x0)
         X_unit_list.append(u0)
         Y_minimize_list.append(-float(score0))
+        C_feas_list.append(1.0 if (score0 > 0.0) else 0.0)
 
         for _ in range(1, self.n_init):
             if self.eval_count >= self.max_evals:
@@ -208,6 +233,7 @@ class UpgradedMALIBOBladeOptimizer(BaseBladeOptimizer):
             score = self.evaluate(x_cand)
             X_unit_list.append(u_cand)
             Y_minimize_list.append(-float(score))
+            C_feas_list.append(1.0 if (score > 0.0) else 0.0)
 
         # 2. Main optimization loop
         while self.eval_count < self.max_evals:
@@ -308,11 +334,13 @@ class UpgradedMALIBOBladeOptimizer(BaseBladeOptimizer):
                             self.guide_direction_steps_left = 15
 
                         cand_score = self.evaluate(cand_to_eval)
+                        cand_feas = (cand_score > 0.0)
                         X_unit_list.append(u_cand)
                         Y_minimize_list.append(-float(cand_score))
+                        C_feas_list.append(1.0 if cand_feas else 0.0)
 
                         improved = (cand_score > score_before + 1e-3)
-                        self._adjust_trust_region(improved)
+                        self._adjust_trust_region(improved, is_feasible=cand_feas)
 
                         if self.eval_count >= self.max_evals:
                             break
@@ -323,9 +351,15 @@ class UpgradedMALIBOBladeOptimizer(BaseBladeOptimizer):
             y_mean = float(np.mean(y_clean))
             y_std_val = max(float(np.std(y_clean)), 1e-4)
             y_norm = (y_clean - y_mean) / y_std_val
-            tau_std = float(np.quantile(y_norm, self.gamma))
+            gamma_t = (
+                annealed_lfbo_gamma(step, self.n_init, self.max_evals, self.gamma, self.gamma_end)
+                if self.use_constrained_acq
+                else self.gamma
+            )
+            tau_std = float(np.quantile(y_norm, gamma_t))
 
             x_obs_np = np.array(X_unit_list, dtype=np.float64)
+            c_obs_np = np.array(C_feas_list, dtype=np.float64)
             x_obs_tensor = torch.from_numpy(x_obs_np.astype(np.float32)).to(self.device)
             y_obs_tensor = torch.from_numpy(y_norm.astype(np.float32)).to(self.device)
 
@@ -381,24 +415,41 @@ class UpgradedMALIBOBladeOptimizer(BaseBladeOptimizer):
                 candidates_u[:n_dir] = np.clip(dir_cands, clip_lb, clip_ub)
                 self.guide_direction_steps_left -= 1
 
-            # 2d. Maximize MALIBO residual-boosted acquisition utility
-            acquisition_scores = self.residual_booster.predict_utility(
+            # 2d. Maximize MALIBO acquisition (Constrained/OOD-Aware c-LFBO when enabled)
+            raw_utilities = self.residual_booster.predict_utility(
                 x_cand=candidates_u,
                 z_sample=z_hat,
                 use_raw_margin=True,
             )
+            if self.use_constrained_acq:
+                acquisition_scores = compute_constrained_lfbo_acquisition(
+                    raw_utilities=raw_utilities,
+                    X_obs=x_obs_np,
+                    c_obs=c_obs_np,
+                    X_cand=candidates_u,
+                    n_init=self.n_init,
+                    lengthscale=self.feas_lengthscale,
+                    tau_feas=self.feas_tau,
+                    beta=self.feas_beta,
+                )
+            else:
+                acquisition_scores = raw_utilities
+
             x_next_u = candidates_u[int(np.argmax(acquisition_scores))]
             x_next = self.from_unit(x_next_u)
 
             new_score = self.evaluate(x_next)
+            new_feas = (new_score > 0.0)
             X_unit_list.append(x_next_u)
             Y_minimize_list.append(-float(new_score))
+            C_feas_list.append(1.0 if new_feas else 0.0)
 
             improved = (new_score > score_before + 1e-3)
-            self._adjust_trust_region(improved)
+            self._adjust_trust_region(improved, is_feasible=new_feas)
 
         elapsed = time.time() - t0
         det = self.evaluator.evaluate_detailed(self.best_x)
+        post_init_feas = C_feas_list[self.n_init :]
 
         out: Dict[str, Any] = {
             "method": self.variant_name,
@@ -406,6 +457,7 @@ class UpgradedMALIBOBladeOptimizer(BaseBladeOptimizer):
             "best_score": float(self.best_score),
             "history": [float(v) for v in self.history_best[: self.max_evals]],
             "best_x": [float(v) for v in self.best_x],
+            "post_init_feasibility_rate": float(np.mean(post_init_feas)) if post_init_feas else 1.0,
             "detailed": {
                 "power_kW": float(det.get("power_kW", 0.0)),
                 "power_MW": float(det.get("power_MW", 0.0)),
